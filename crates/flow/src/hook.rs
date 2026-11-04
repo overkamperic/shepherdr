@@ -15,7 +15,7 @@ use crate::herdr::{cli::current_socket, Herdr};
 use crate::json::*;
 use crate::limits::run::granted;
 use crate::runner::{runner_alive, spawn_runner};
-use crate::store::{failures::failure_patch, files::{data_dir, has_tasks}, handovers::fresh_list, inbox::{pending_text, take_text, untake_text}, repos::cwd_of, tasks::{get, list, update_wait, Change, ListOpts, Task}};
+use crate::store::{failures::failure_patch, files::{data_dir, has_tasks}, handovers::fresh_list, inbox::{pending_text, take_text, untake_text}, marks::pending_events, repos::cwd_of, tasks::{get, list, update_wait, Change, ListOpts, Task}};
 use crate::submit::{hand, not_started, note_sent, rest, took};
 use std::path::Path;
 
@@ -154,8 +154,10 @@ pub fn apply(id: &str, a: &Value, api: &Herdr) {
             }
             if t.s("stage") == "working" {
                 if t.b("sent") { return Ok(Change::Write); } // text typed in is still waiting to be taken: not the end of the turn that answers it (submit.rs)
-                // completion_seq is absent until an agent's first completed turn: absent means "no finished turn yet".
-                if !comp.is_null() && comp != *t.at("handled").at("comp") && !runner_alive(t) { then = Then::Finish; }
+                // A saved worker-end report also counts: its detached runner may have been lost, and herdr may
+                // supply no completion counter. The finish runner judges the report against the saved conversation.
+                let ended = pending_events(t).iter().any(|e| e.s("role") == "agent" && !(e.b("side") && e.s("session") != t.s("session")));
+                if !runner_alive(t) && (ended || (!comp.is_null() && comp != *t.at("handled").at("comp"))) { then = Then::Finish; }
                 else if !runner_alive(t) && reopened(t, &comp) { then = Then::Recover; } // the runner looks again itself, and only hands the task to the human
                 return Ok(Change::Write);
             }

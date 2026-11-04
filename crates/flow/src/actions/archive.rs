@@ -16,6 +16,11 @@ pub fn archive(id: &str) -> Res<Task> {
     let (mut workspace, mut socket) = (String::new(), String::new());
     let t = update(cur.s("id"), |t| {
         if t.b("archivedAt") { return Ok(Change::Keep); }
+        if ["approval", "done"].contains(&t.s("stage")) && runner_alive(t) {
+            let msg = if t.at("runner").s("job") == "cleanup" { format!("{} is busy cleaning up after its merge. Try again in a moment.", t.s("id")) }
+                else { format!("{} is still active. Stop its agent first; an automatic merge must finish first.", t.s("id")) };
+            return Err(Error::ownership_busy(msg));
+        }
         if runner_alive(t) && t.at("runner").s("job") == "cleanup" { return Err(Error::busy(format!("{} is busy cleaning up after its merge. Try again in a moment.", t.s("id")))); }
         if SLOT_STAGES.contains(&t.s("stage")) || ["queued", "attempts"].contains(&t.s("stage")) || runner_alive(t) || t.b("autoMerge") || t.b("mergeIntent") {
             crate::fail!("{} is still active. Stop its agent first; an automatic merge must finish first.", t.s("id"));

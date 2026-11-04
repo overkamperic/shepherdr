@@ -77,6 +77,21 @@ Coordinator's closing line use them too):
 `approve` refuses work whose last review failed, and says what the review found. `approve <id> --anyway` merges it all
 the same. It is for when the human said so in so many words.
 
+### Errors for programs
+
+With `--json`, task-command errors returned through the CLI error handler exit with status 1 and write JSON to stderr:
+
+```json
+{"error":{"code":"ownership_busy","message":"PRJ-12 is in the middle of a workflow step. Stop it first."}}
+```
+
+`ownership_busy` means a completed task at approval or done still has a live native owner when `report --state done`
+or `archive` checks it under the task lock. A program may keep that finalization owed and try again after ownership
+releases. The code covers all native job kinds. It does not authorize stopping the owner, clearing its marker or
+ignoring an unfinished worker. Other codes are `busy` (ordinary lock contention), `refused` and `error`; they are not
+this completed-task ownership result. Without `--json`, the existing sentence for a person is unchanged. Successful
+JSON answers keep their existing shape.
+
 ### A flag a command does not know is refused
 
 Each command takes only its own flags, plus `--json` and `--help`. `add`, `delegate` and `automations` also take any
