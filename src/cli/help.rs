@@ -60,6 +60,7 @@ pub const HELP: &str = r#"herdr-projects: a work board for herdr
   herdr-projects machines                      other machines: whether each answers, its version, or why not and what to do;
                                                 and whether another machine could ask this one
   herdr-projects web-ui [link|unlink]          the board inside the herdr web UI: how it stands; point the web UI's shared link at it, or back
+  herdr-projects capabilities [--json]         read-only completion/ownership contract versions (JSON)
   herdr-projects version                       this program's version, and where it is
   herdr-projects install                       write the launcher in the data folder (agents and hooks run it) for this program
   herdr-projects doctor                       older installs on this machine (herdr-superwork, herdr-projects 0.2): take over

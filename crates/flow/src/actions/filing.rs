@@ -1,7 +1,7 @@
 //! Adding and editing a task: add, rename, describe, pin, and a report of where it stands.
 use super::shared::is_agent_stage;
 use super::talk::stop;
-use crate::err::Res;
+use crate::err::{Error, Res};
 use crate::flow;
 use crate::json::*;
 use crate::research::RESEARCH;
@@ -47,7 +47,6 @@ pub fn report(id: &str, r: Report) -> Res<Task> {
     if !["idle", "working", "blocked", "done", "error"].contains(&r.state.as_str()) { crate::fail!("state must be one of: idle, working, blocked, done, error"); }
     // "Mark it idle" on a task whose agent is working means "stop it".
     if r.state == "idle" && flow::task::is_agent_task(&cur) && is_agent_stage(cur.s("stage")) { return stop(cur.s("id")); }
-    let delegated = flow::task::is_agent_task(&cur) && (is_agent_stage(cur.s("stage")) || ["asks", "nosummary", "approval", "reviewneeds", "failed", "plan"].contains(&cur.s("stage")));
     let mark = if r.state == "done" { flow::spaces::tidy_mark(&cur, "merged", "") } else { None };
     let t = update(cur.s("id"), |t| {
         assert_unarchived(t)?;
@@ -62,6 +61,11 @@ pub fn report(id: &str, r: Report) -> Res<Task> {
             if r.as_agent { let now = crate::clock::now(); t.put("selfBlocked", now); t.put("blocked", json!({ "at": now, "kind": t.at("kind"), "msg": t.at("msg") })); }
             return Ok(Change::Write);
         }
+        // Ownership and stage must be read together under the update lock: a runner may claim after find().
+        if r.state == "done" && ["approval", "done"].contains(&t.s("stage")) && runner_alive(t) {
+            return Err(Error::ownership_busy(format!("{} is in the middle of a workflow step. Stop it first.", t.s("id"))));
+        }
+        let delegated = flow::task::is_agent_task(t) && (is_agent_stage(t.s("stage")) || ["asks", "nosummary", "approval", "reviewneeds", "failed", "plan"].contains(&t.s("stage")));
         if delegated && runner_alive(t) { crate::fail!("{} is in the middle of a workflow step. Stop it first.", t.s("id")); }
         t.del("kind");
         t.put("msg", one_line(&r.msg, 2048));

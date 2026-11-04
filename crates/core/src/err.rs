@@ -6,6 +6,8 @@ pub enum Kind {
     Plain,
     /// Somebody else holds the lock: try again in a moment.
     Busy,
+    /// Completed work still has a live native owner: finalization can retry after it releases the task.
+    OwnershipBusy,
     /// A value or a request was refused, with the reason (and the nearest right one) in the words.
     Refused,
 }
@@ -17,6 +19,7 @@ impl Error {
     pub fn new(msg: impl Into<String>) -> Self { Error { msg: msg.into(), kind: Kind::Plain } }
     pub fn refused(msg: impl Into<String>) -> Self { Error { msg: msg.into(), kind: Kind::Refused } }
     pub fn busy(msg: impl Into<String>) -> Self { Error { msg: msg.into(), kind: Kind::Busy } }
+    pub fn ownership_busy(msg: impl Into<String>) -> Self { Error { msg: msg.into(), kind: Kind::OwnershipBusy } }
 }
 impl fmt::Display for Error { fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { f.write_str(&self.msg) } }
 impl std::error::Error for Error {}

@@ -1,6 +1,8 @@
 //! The one program. With no arguments it opens the board in the current terminal; the plugin's pane entrypoint runs
 //! the same program as the plugin's pane in herdr. The subcommands let any agent drive the board from its shell. The
 //! entries herdr and the agents' hooks run are here; the commands on tasks are cli/tasks.rs.
+pub mod capabilities;
+pub mod errors;
 pub mod flags;
 pub mod help;
 pub mod tasks;
@@ -40,13 +42,15 @@ pub fn main(argv: Vec<String>) -> i32 {
     let cmd = a.pos.first().cloned().unwrap_or_else(|| if a.flags.b("skill") { "--skill".into() } else if a.flags.b("help") { "help".into() } else { "board".into() });
     match run(&cmd, &a) {
         Ok(code) => code,
-        Err(e) => { eprintln!("{}", say_ids(&e.msg, &repo_keys())); 1 }
+        Err(e) => { eprintln!("{}", errors::say(&e, a.flags.b("json"))); 1 }
     }
 }
 fn run(cmd: &str, a: &Args) -> Res<i32> {
     // A flag the command does not know is refused before anything is done, with the nearest right one named
     // (cli/flags.rs). Every command: the ones herdr, a hook and the board itself run too.
     refuse_unknown(cmd, a)?;
+    // Discovery must bypass every startup migration and settings write.
+    if cmd == "capabilities" || (cmd == "version" && a.flags.b("json")) { capabilities::say(); return Ok(0); }
     crate::take_over::at_start(cmd); // older installs taken over: herdr-superwork's, the old herdr-projects 0.2's (take_over.rs)
     home_at_start(cmd); // an older version's folders move into the one home folder, once (store/move_home.rs)
     crate::store::old_copy::copy_at_start(cmd); // …then a copy of the data an older (Node) version wrote, once (store/old_copy.rs)
