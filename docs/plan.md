@@ -122,6 +122,10 @@ The board does not only ask for it. Four things hold, from the moment the plan s
 2. **The worktree's files are read-only too.** Every file and folder in it loses its write permission, ignored files
    too, and so does the worktree's own git folder (its index, its `HEAD`). Whatever runs outside the mount is answered
    `Permission denied`. The permission comes back when the build starts (and before the worktree is removed).
+   - The board gives it back from outside the mount. The writer's own turn-end report runs inside it, so the board's
+     work after that turn is started by its housekeeping instead, which runs outside it.
+   - **No build starts in a worktree that is still read-only.** Where the permission cannot be given back, the task
+     says `The worktree could not be made writable`; the yes stands, and a retry gives it back and starts the build.
 3. **The board looks for itself**, when the plan's turn ends and once more right before the build starts. If something
    changed all the same (somebody took the read-only bit off), it undoes it in the task's own worktree: the branch goes
    back to the commit it stood on, added files go, and so do ignored files that were not there when the step began.

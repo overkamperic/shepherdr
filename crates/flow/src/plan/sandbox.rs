@@ -13,6 +13,10 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 static KNOWN: Mutex<Option<(bool, i64)>> = Mutex::new(None);
+/// Set for the program in the mount, so for everything it starts: its own hooks (the turn-end report) run in it too.
+pub const BOXED: &str = "HERDR_PROJECTS_BOXED";
+/// Is this process in such a mount? Nothing it starts can make the worktree writable again (plan/lock.rs).
+pub fn inside() -> bool { std::env::var(BOXED).as_deref() == Ok("1") }
 /// Can a read-only mount be made here? `HERDR_PROJECTS_SANDBOX` says it outright (bwrap, none).
 pub fn sandbox_ok() -> bool {
     if let Ok(said) = std::env::var("HERDR_PROJECTS_SANDBOX") { if !said.is_empty() { return said != "none"; } }
@@ -36,7 +40,7 @@ pub const NO_MOUNT: &str = "This task starts with a plan (plan.approve), and its
 pub fn boxed_command(t: &Obj, name: &str, kind: &str, args: &[String]) -> String {
     let tree = guarded(t).map(|p| p.display().to_string()).unwrap_or_default();
     let git = git_dir_of(std::path::Path::new(&tree)); // a worktree's git folder is elsewhere; a checkout's is inside it
-    let mut all: Vec<String> = vec!["env".into(), format!("HERDR_PROJECTS_AGENT={name}"), "bwrap".into(), "--dev-bind".into(), "/".into(), "/".into(), "--ro-bind".into(), tree.clone(), tree];
+    let mut all: Vec<String> = vec!["env".into(), format!("HERDR_PROJECTS_AGENT={name}"), format!("{BOXED}=1"), "bwrap".into(), "--dev-bind".into(), "/".into(), "/".into(), "--ro-bind".into(), tree.clone(), tree];
     if let Some(g) = git { let g = g.display().to_string(); all.extend(["--ro-bind".into(), g.clone(), g]); }
     all.extend(["--die-with-parent".into(), "--".into(), crate::agents::kinds::program(kind).into()]);
     all.extend(args.iter().cloned());

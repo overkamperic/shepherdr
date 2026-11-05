@@ -36,10 +36,18 @@ pub fn lock(t: &Obj) -> bool {
     let Some(git) = git_dir_of(&tree) else { return false }; // a folder that is no worktree: never locked
     chmod(false, &git) && chmod(false, &tree)
 }
+/// Returns false when something in the worktree or its git folder could not be made writable (true with no worktree).
 pub fn unlock(t: &Obj) -> bool {
-    let Some(tree) = tree_of(t) else { return false };
+    let Some(tree) = tree_of(t) else { return true };
     let a = chmod(true, &tree);
     git_dir_of(&tree).map(|g| chmod(true, &g)).unwrap_or(true) && a
+}
+/// What a task says when its worktree could not be made writable for the build: the build does not start read-only.
+pub fn still_locked(t: &Obj) -> Obj {
+    obj(json!({ "stage": "plan", "auth": false, "agentCanFix": false, "title": "The worktree could not be made writable",
+        "msg": "The plan is approved, but its worktree is still read-only: the build has not started",
+        "detail": format!("The worktree was read-only while the plan waited, and the board could not make it writable again for the build. It was tried from inside the plan writer's read-only mount, or some files in it cannot be changed by you.\n\nFolder: {}", t.s("worktree")),
+        "next": "Retry: the board makes the worktree writable and starts the build. The yes still stands." }))
 }
 pub fn is_locked(t: &Obj) -> bool {
     let Some(tree) = tree_of(t) else { return false };

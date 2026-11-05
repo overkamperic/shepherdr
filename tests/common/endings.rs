@@ -51,7 +51,10 @@ pub fn end_turn(f: &F, pi: usize, prompt: &str, step: &Value) {
     if !step.b("hook") { return; }
     let first = a.arr("prompts").first().map(text).unwrap_or_default();
     let says = match kind.as_str() { "codex" => json!({ "thread-id": id, "input-messages": [first] }), "claude" => json!({ "session_id": id, "transcript_path": file.display().to_string() }), _ => json!({ "transcript_path": file.display().to_string() }) };
+    // A program in the read-only mount runs its hook there too: with the mount's marker (plan/sandbox.rs).
+    if a.b("boxed") { unsafe { std::env::set_var(sw::plan::sandbox::BOXED, "1") }; }
     report(&first, says);
+    unsafe { std::env::remove_var(sw::plan::sandbox::BOXED) };
 }
 /// A Codex sub-agent the agent started (a review's `/root/check_plans`) ending its own turn: its conversation, which
 /// names its parent and carries the agent's first prompt along, and its turn-end report, the parent's notify hook run

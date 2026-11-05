@@ -3,7 +3,7 @@
 //! which takes the task's place in herdr while it writes (its tab `Planner` and pane become the task's). `start_build`:
 //! the yes is written down, the repo is looked at once more, and the builder is handed the plan. A task done several
 //! times at once is split only now: one plan, approved once, and every attempt is handed it.
-use super::lock::{lock, unlock};
+use super::lock::{lock, still_locked, unlock};
 use super::sandbox::{sandbox_ok, NO_MOUNT};
 use super::untouched::{held_failure, ignored_mark, put_back};
 use super::{approved, go_words, wanted};
@@ -76,7 +76,8 @@ pub fn start_build_by(id: &str, g: &mut Guard, by: &str) -> Res<()> {
     if !approved(&t) { t = g.set(|t| { let p = t.obj_mut("plan"); p.put("approvedAt", now()); p.put("approvedBy", if by.is_empty() { "you" } else { by }); })?; }
     // Once more, right before the first change may be made.
     let Some(undone) = put_back(&t) else { fail(g, held_failure(&t), FailHow::default())?; return Ok(()); };
-    unlock(&t);
+    // Never a build in a worktree that is still read-only: it stays locked (and `plan.locked` says so) until a retry.
+    if !unlock(&t) { fail(g, still_locked(&t), FailHow::default())?; return Ok(()); }
     if !undone.is_empty() { g.set(|t| t.obj_mut("plan").put("undone", json!({ "list": undone.iter().take(30).collect::<Vec<_>>(), "n": undone.len(), "at": now() })))?; }
     // The writer's conversation is counted onto the task before it is let go.
     crate::limits::spent::count(id, "agent", 10000);

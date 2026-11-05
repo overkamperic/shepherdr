@@ -72,7 +72,7 @@ fn finish_once(id: &str, force: bool) -> bool {
         ev = pending.iter().filter(|e| e.s("role") == "agent" && !(e.b("side") && e.s("session") != session)).last().cloned();
         if pending.is_empty() && (t.s("stage") != "working" || t.b("archivedAt")) { return Ok(Change::Keep); }
         // Every event up to here is now judged: accepted below, or dropped as a repeat, a side chat or a stale round.
-        if !pending.is_empty() { let n = pending.iter().map(|e| e.i("n")).max().unwrap_or(0); t.put("eventsHandled", n); t.put("events", json!([])); }
+        if !pending.is_empty() { let n = pending.iter().map(|e| e.i("n")).max().unwrap_or(0); t.put("eventsHandled", n); t.put("events", json!([])); t.del("finishOwed"); }
         let skip = t.b("archivedAt") || match &ev { Some(e) => IGNORES.contains(&t.s("stage")) || (t.s("stage") == "stopped" && e.i("at") < t.i("stoppedAt") + 3000), None => t.s("stage") != "working" };
         if skip { return Ok(Change::Write); }
         mine = true;
