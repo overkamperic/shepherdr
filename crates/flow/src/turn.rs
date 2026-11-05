@@ -65,7 +65,10 @@ pub fn owed_pass(tasks: &[Task], socket: &str) {
         let mut go = false;
         let _ = update_wait(t.s("id"), 2000, |t| {
             if !t.b("finishOwed") || marker_alive(t.at("runner")) { return Ok(Change::Keep); }
-            t.del("finishOwed"); go = !pending_events(t).is_empty();
+            go = !pending_events(t).is_empty();
+            // Keep the debt until its events are consumed: a spawn can fail, or die before claiming the task.
+            if go { return Ok(Change::Keep); }
+            t.del("finishOwed");
             Ok(Change::Write)
         });
         if go { spawn_runner("finish", t.s("id"), &[]); }

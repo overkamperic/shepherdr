@@ -86,3 +86,23 @@ fn a_worktree_that_cannot_be_made_writable_holds_the_build_and_a_retry_starts_it
     assert_eq!(t.s("stage"), "working", "{}", t.at("failure"));
     assert!(t.at("plan").b("built") && !is_locked(&t));
 }
+
+#[test]
+fn an_owed_finish_survives_a_lost_runner_start_while_the_agent_still_looks_busy() {
+    let w = plan_world();
+    w.script(json!({ "worker": [{ "plan": PLAN, "note": "Written.", "status": "working" }, { "status": "working" }],
+        "reviewer": [{ "verdict": { "meets": true, "findings": [], "text": "A good plan." } }] }));
+    let id = w.add("Work");
+    delegate(&id);
+    assert_eq!(run_next(), "delegate");
+    report_in_the_mount(&id);
+    sw::housekeeping::housekeeping(&w.socket, sw::housekeeping::Force::Yes);
+    assert_eq!(queued(), vec!["finish".to_string()]);
+    // A spawn that failed, or a process that died before claiming the task, leaves no runner marker.
+    sw::runner::JOBS.with(|j| j.borrow_mut().clear());
+    sw::housekeeping::housekeeping(&w.socket, sw::housekeeping::Force::Yes);
+    assert_eq!(queued(), vec!["finish".to_string()], "the owed report must remain recoverable");
+    let t = settle(&id);
+    assert!(t.at("plan").b("built") && !t.b("finishOwed"));
+    assert!(!is_locked(&t));
+}
