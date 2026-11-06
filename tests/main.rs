@@ -157,6 +157,7 @@ mod notify;
 mod old_suggestions;
 mod ownership_busy;
 mod plan;
+mod plan_boxed;
 mod plan_modes;
 mod plan_more;
 mod plan_rest;

@@ -40,6 +40,8 @@ pub fn housekeeping(socket: &str, force: Force) {
         if woke || every.iter().any(|t| t.s("stage") == "queued") { start_queued(socket); }
         // Attempts that are all through: the task fails, goes on with the one that passed, or waits for a pick.
         crate::attempts::settle::settle_pass(&tasks, socket, now());
+        // A turn that ended in a plan writer's read-only mount: its runner is started from here (turn.rs).
+        crate::turn::owed_pass(&every, socket);
         if due(&format!("spaces-{}", key(socket)), 30000) { sweep_repo_spaces(socket); sweep_closing(socket); }
         // A clean-up that found the task's space in use is tried again, so a done task leaves the sidebar by itself once
         // the space is free; after a turn in the agent's own terminal only when that has been quiet for a while.
