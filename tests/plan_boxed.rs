@@ -106,3 +106,36 @@ fn an_owed_finish_survives_a_lost_runner_start_while_the_agent_still_looks_busy(
     assert!(t.at("plan").b("built") && !t.b("finishOwed"));
     assert!(!is_locked(&t));
 }
+
+#[test]
+fn housekeeping_in_the_mount_leaves_an_owed_finish_for_the_outside_pass() {
+    for status in ["working", "idle"] {
+        let w = plan_world();
+        w.script(json!({ "worker": [{ "plan": PLAN, "note": "Written.", "status": "working" }, { "status": "working" }],
+            "reviewer": [{ "verdict": { "meets": true, "findings": [], "text": "A good plan." } }] }));
+        let id = w.add("Work");
+        delegate(&id);
+        assert_eq!(run_next(), "delegate");
+        report_in_the_mount(&id);
+        let t = task(&id);
+        let pane = t.at("link").t("pane");
+        w.patch(|s| { for p in s["panes"].as_array_mut().unwrap() {
+            if p.s("pane_id") == pane { p["agent"]["status"] = json!(status); }
+        } });
+        // A planner's ordinary board command also runs housekeeping, in the same read-only mount.
+        unsafe { std::env::set_var(sw::plan::sandbox::BOXED, "1") };
+        sw::housekeeping::housekeeping(&w.socket, sw::housekeeping::Force::Yes);
+        unsafe { std::env::remove_var(sw::plan::sandbox::BOXED) };
+        assert!(queued().is_empty(), "{status}: work started in the mount: {:?}", queued());
+        let held = task(&id);
+        assert_eq!(held.at("events"), t.at("events"));
+        assert_eq!(held.at("finishOwed"), t.at("finishOwed"));
+        assert!(!held.at("plan").b("built") && is_locked(&held));
+        // The outside pass still sees the report and starts the build once.
+        sw::housekeeping::housekeeping(&w.socket, sw::housekeeping::Force::Yes);
+        let t = settle(&id);
+        assert!(t.at("plan").b("built") && !t.b("finishOwed"), "{status}: {}", t.at("failure"));
+        assert!(!is_locked(&t));
+        assert_eq!(prompts(&w, t.at("link").s("pane")).len(), 1, "the restarted builder gets one prompt");
+    }
+}
