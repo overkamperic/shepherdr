@@ -22,6 +22,8 @@ fn key(s: &str) -> String { sha1_smol::Sha1::from(s).digest().to_string()[..8].t
 pub enum Force { No, Yes, Pr }
 
 pub fn housekeeping(socket: &str, force: Force) {
+    // Ordinary board commands run this too: a planner's command must leave all background work for outside its mount.
+    if crate::plan::sandbox::inside() { return; }
     if !has_tasks() { return; }
     if force == Force::No && !due(&format!("housekeep-{}", key(socket)), 2000) { return; }
     // What an older version kept of suggested tasks is written down and taken off the tasks, once (store/old_suggestions.rs).
