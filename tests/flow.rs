@@ -7,6 +7,28 @@ use sw::actions::{filing, finish_line, talk};
 use sw::json::*;
 
 #[test]
+fn delegate_here_pins_the_callers_linked_worktree_commit() {
+    let w = world();
+    w.script(json!({ "worker": [{ "status": "working" }] }));
+    let linked = w.base.join("linked-checkout");
+    git(&w.root, &["worktree", "add", "-q", "-b", "feature", &linked.display().to_string()]);
+    std::fs::write(linked.join("feature.txt"), "approved feature\n").unwrap();
+    git(&linked, &["add", "feature.txt"]);
+    git(&linked, &["commit", "-qm", "feature"]);
+    let primary = git(&w.root, &["rev-parse", "HEAD"]);
+    let approved = git(&linked, &["rev-parse", "HEAD"]);
+    std::env::set_current_dir(&linked).unwrap();
+    let id = w.add("Pinned here");
+    delegate_with(&id, json!({ "workspace.from": "here" }));
+    // The queued task keeps the requested commit even if the caller moves later.
+    git(&linked, &["commit", "--allow-empty", "-qm", "later"]);
+    let t = settle(&id);
+    assert_eq!(t.s("baseSha"), approved);
+    assert_eq!(git(std::path::Path::new(t.s("worktree")), &["rev-parse", "HEAD"]), approved);
+    assert_eq!(git(&w.root, &["rev-parse", "HEAD"]), primary);
+}
+
+#[test]
 fn delegate_makes_a_worktree_space_with_the_agent_in_its_root_pane_and_the_rules() {
     let w = world();
     w.script(json!({ "worker": [{ "status": "working" }] }));
