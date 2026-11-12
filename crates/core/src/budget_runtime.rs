@@ -28,11 +28,14 @@ pub fn launch(task: &str, role: &str, kind: &str, round: i64, scope: &crate::jso
     let output = crate::store::files::dir_of(task).join(if role == "qa" { "review" } else { "bounded-output" });
     std::fs::create_dir_all(&output)?;
     args.extend(["--add-dir".into(), output.display().to_string()]);
+    let reports = crate::store::files::reports_dir().join(task);
+    std::fs::create_dir_all(&reports)?;
+    args.extend(["--add-dir".into(), reports.display().to_string()]);
     Ok(args)
 }
 pub fn environment() -> Vec<(String, String)> {
     if !enabled() { return vec![]; }
-    ["PIPELINE_BUDGET_MANIFEST", "PIPELINE_BUDGET_DB", "PIPELINE_BUDGET_CONTROL", "CODEX_REQUEST_GATE"]
+    ["PIPELINE_BUDGET_MANIFEST", "PIPELINE_BUDGET_DB", "PIPELINE_BUDGET_CONTROL", "CODEX_REQUEST_GATE", "HERDR_PROJECTS_REPORTS_DIR"]
         .into_iter().filter_map(|key| std::env::var(key).ok().map(|value| (key.into(), value)))
         .chain(std::iter::once(("CODEX_REQUEST_GATE_REQUIRED".into(), "1".into()))).collect()
 }

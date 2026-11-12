@@ -10,7 +10,7 @@ pub fn environment(file: &Path, current: impl Fn(&str) -> Option<String>) -> Res
     let mut missing = vec![];
     for (key, field) in [("PIPELINE_BUDGET_MANIFEST", "approval"), ("PIPELINE_BUDGET_DB", "database"),
                         ("PIPELINE_BUDGET_CONTROL", "control"), ("CODEX_REQUEST_GATE", "gate"),
-                        ("HERDR_PROJECTS_CONFIG_DIR", "config")] {
+                        ("HERDR_PROJECTS_CONFIG_DIR", "config"), ("HERDR_PROJECTS_REPORTS_DIR", "reports")] {
         let value = saved.s(field);
         if value.is_empty() || !Path::new(value).is_absolute() { crate::fail!("durable pipeline binding is incomplete"); }
         match current(key) {
