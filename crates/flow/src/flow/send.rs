@@ -64,6 +64,10 @@ pub fn note_rule(t: &Task) -> String { format!("Before you stop, write your clos
 /// A prompt the plugin itself sends (check output, review findings, conflict or pull-request repair). It writes
 /// expectedWake first, so the turn it causes is known to be the plugin's own: counters and an approved merge survive.
 pub fn send_own(id: &str, text: &str, reason: &str, keep_intent: bool, patch: Obj, tries: i64) -> Res<&'static str> {
+    if crate::budget_runtime::enabled() {
+        let task = crate::store::tasks::get(id).ok_or("bounded task disappeared")?;
+        crate::budget_runtime::repair(id, reason, task.i("armedAt"))?;
+    }
     let mut wake = obj(json!({ "reason": reason, "keepIntent": keep_intent, "at": now() }));
     if tries > 0 { wake.put("tries", tries); }
     let wake = Value::Object(wake);

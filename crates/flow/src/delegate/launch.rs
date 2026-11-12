@@ -26,20 +26,22 @@ pub fn agent_name(t: &Obj, taken: &[String]) -> String {
     let h = sha1_smol::Sha1::from(format!("{}:{}:{}", t.s("id"), t.s("root"), now())).digest().to_string();
     format!("{base}-{}", &h[..4])
 }
-pub struct Extras { pub hook: Vec<String>, pub rules: Vec<String>, pub hooked: bool, pub session: Option<String>, pub version: String }
+pub struct Extras { pub mandatory: Vec<String>, pub hook: Vec<String>, pub rules: Vec<String>, pub hooked: bool, pub session: Option<String>, pub version: String }
 /// The launch arguments that are the board's own: the turn-end hook (with a new secret token) and the standing rules.
 /// Nothing is written to the user's own agent settings.
 pub fn launch_extras(t: &Task, role: &str, kind: &str, round: i64, standing: &str, resume: Option<&str>) -> Res<Extras> {
+    let budget_role = if role == "reviewer" { "qa" } else if plan::planner(t) { "planning" } else { "implementation" };
+    let mandatory = crate::budget_runtime::launch(t.s("id"), budget_role, kind, round, &json!({"title": t.at("title"), "description": t.at("description")}))?;
     let token = crate::util::random_hex(18);
     set_token(t.s("id"), role, &token, round)?;
     let mut hook = None;
-    if installed::hook_usable(kind) {
+    if !crate::budget_runtime::enabled() && installed::hook_usable(kind) {
         let h = adapter::Hook { shim: flow::send::shim().display().to_string(), id: t.t("id"), role: role.into(), token, round, dir: dir_of(t.s("id")), plan: role == "agent" && plan::plan_args(t, kind).is_some() };
         hook = adapter::hook_args(kind, &h).ok().flatten();
     }
     let session = if resume.is_none() { adapter::new_session(kind) } else { None };
     let rules = if !standing.is_empty() && adapter::has_standing(kind) { adapter::standing(kind, standing, &dir_of(t.s("id")))? } else { vec![] };
-    Ok(Extras { hooked: hook.is_some(), hook: hook.unwrap_or_default(), rules, session, version: installed::version_of(kind) })
+    Ok(Extras { mandatory, hooked: hook.is_some(), hook: hook.unwrap_or_default(), rules, session, version: installed::version_of(kind) })
 }
 /// Used by a first delegation and by restarting an exited agent. The pane must be at its shell prompt.
 pub fn start_agent(id: &str, g: &mut Guard, prompt: &str, resume: Option<&str>) -> Res<&'static str> {
@@ -63,6 +65,7 @@ pub fn start_agent(id: &str, g: &mut Guard, prompt: &str, resume: Option<&str>) 
     let args = |hooked: bool| -> Res<Vec<String>> {
         let mut extra = if hooked { x.hook.clone() } else { vec![] };
         extra.extend(x.rules.clone());
+        extra.extend(x.mandatory.clone());
         start::start_args(&kind, &start::StartOpts { model: model.clone(), effort: level.clone(), fast, access: who.access.clone(), plan: plan::plan_args(&t, &kind), resume: resume.unwrap_or("").into(), session: x.session.clone().unwrap_or_default(), extra })
     };
     let (mut blocked, mut hooked) = (false, x.hooked);

@@ -8,7 +8,11 @@ use crate::store::files::dir_of;
 use crate::store::repos::cwd_of;
 use std::path::PathBuf;
 
-pub fn note_file(t: &Obj) -> PathBuf { dir_of(if t.b("as") { t.s("as") } else { t.s("id") }).join("closing-note.md") }
+pub fn note_file(t: &Obj) -> PathBuf {
+    let dir = dir_of(if t.b("as") { t.s("as") } else { t.s("id") });
+    let dir = if crate::budget_runtime::enabled() { dir.join("bounded-output") } else { dir };
+    dir.join("closing-note.md")
+}
 pub fn review_dir(t: &Obj) -> PathBuf { dir_of(t.s("id")).join("review") }
 /// The board's folder in the folder an agent works in: only the files sent from the web board go there (webui/attach.rs).
 pub const RULE_DIR: &str = ".herdr-projects";

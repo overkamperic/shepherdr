@@ -26,10 +26,13 @@ pub struct StartOpts { pub model: String, pub effort: String, pub fast: Option<b
 /// conversation; `session` names a new one; `extra` are the hook and standing-rule arguments; `plan` replaces the
 /// access flags with the program's own plan mode.
 pub fn start_args(k: &str, o: &StartOpts) -> Res<Vec<String>> {
+    if crate::budget_runtime::enabled() && (k != "codex" || !o.extra.iter().any(|v| v == "--pipeline-lease")) {
+        crate::fail!("bounded agent launch is missing its mandatory lease");
+    }
     let mut out: Vec<String> = kind(k).map(|a| super::kinds::fill(a.lead, "")).unwrap_or_default(); // `hermes chat`
     if !o.resume.is_empty() { out.extend(resume_args(k, &o.resume)); } // first: Codex's `resume` is a subcommand
     if o.resume.is_empty() { out.extend(session_args(k, &o.session)); out.extend(fresh_args(k)); }
-    match &o.plan { Some(p) => out.extend(p.iter().cloned()), None => out.extend(access_args(k, if o.access.is_empty() { "full" } else { &o.access })?) }
+    if !crate::budget_runtime::enabled() { match &o.plan { Some(p) => out.extend(p.iter().cloned()), None => out.extend(access_args(k, if o.access.is_empty() { "full" } else { &o.access })?) } }
     if !o.model.is_empty() { out.extend(model_args(k, &o.model)); }
     let level = effort_for(k, &o.effort);
     if !level.is_empty() { out.extend(effort_args(k, &level)); }

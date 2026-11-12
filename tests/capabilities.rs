@@ -14,8 +14,8 @@ fn real_programs_capabilities_are_read_only_even_with_an_old_install_present() {
             .env_clear().env("HOME", &home).env("PATH", "/usr/bin:/bin").current_dir(&home).output().unwrap();
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         let v: Value = serde_json::from_slice(&o.stdout).unwrap();
-        assert_eq!(v, json!({"schema": 1, "product": "herdr-projects", "capabilities": {
-            "worker_end_recovery": 1, "ownership_busy": 1
+        assert_eq!(v, json!({"schema": 1, "product": "herdr-projects", "budget_binding_loaded": false, "capabilities": {
+            "worker_end_recovery": 1, "ownership_busy": 1, "bounded_launch": 1, "budget_refresh": 1
         }}));
         assert!(o.stderr.is_empty());
         let dirs: Vec<_> = std::fs::read_dir(&home).unwrap().map(|e| e.unwrap().file_name()).collect();

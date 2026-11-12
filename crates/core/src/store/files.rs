@@ -37,8 +37,10 @@ pub fn reports_dir() -> PathBuf { env("HERDR_PROJECTS_REPORTS_DIR").map(PathBuf:
 /// The board's own folders as resolved here, for a process started somewhere that does not inherit this
 /// environment (an agent's herdr space).
 pub fn board_env() -> Vec<(String, String)> {
-    vec![("HERDR_PROJECTS_DATA_DIR".into(), absolute(&data_dir()).display().to_string()),
-         ("HERDR_PROJECTS_CONFIG_DIR".into(), absolute(&config_dir()).display().to_string())]
+    let mut vars = vec![("HERDR_PROJECTS_DATA_DIR".into(), absolute(&data_dir()).display().to_string()),
+         ("HERDR_PROJECTS_CONFIG_DIR".into(), absolute(&config_dir()).display().to_string())];
+    vars.extend(crate::budget_runtime::environment());
+    vars
 }
 pub fn tasks_dir() -> PathBuf { data_dir().join("tasks") }
 pub fn has_tasks() -> bool { tasks_dir().exists() }
