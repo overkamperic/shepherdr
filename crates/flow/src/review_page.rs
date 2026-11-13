@@ -19,9 +19,8 @@ pub fn ensure_server() -> Value {
     if let Some(i) = server_info() { return i; }
     let mut c = std::process::Command::new(bin());
     c.arg("serve").current_dir(data_dir()).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    crate::runner::detach(&mut c);
-    let Ok(child) = c.spawn() else { return Value::Null };
-    let pid = child.id() as i64;
+    let pid = crate::runner::spawn_detached(&mut c) as i64;
+    if pid == 0 { return Value::Null; }
     for _ in 0..40 {
         std::thread::sleep(std::time::Duration::from_millis(100));
         if let Some(i) = read_json(&serve_file()) { if i.i("pid") == pid && i.b("port") { return i; } }
