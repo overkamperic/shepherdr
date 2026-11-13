@@ -76,7 +76,7 @@ pub fn note_rule(t: &Task) -> String { format!("Before you stop, write your clos
 /// A prompt the plugin itself sends (check output, review findings, conflict or pull-request repair). It writes
 /// expectedWake first, so the turn it causes is known to be the plugin's own: counters and an approved merge survive.
 pub fn send_own(id: &str, text: &str, reason: &str, keep_intent: bool, patch: Obj, tries: i64) -> Res<&'static str> {
-    if crate::budget_runtime::enabled() && !crate::budget_runtime::trial_enabled()? {
+    if crate::budget_runtime::enabled() {
         let task = crate::store::tasks::get(id).ok_or("bounded task disappeared")?;
         crate::budget_runtime::repair(id, reason, task.i("armedAt"))?;
     }
@@ -98,6 +98,8 @@ pub fn send_own(id: &str, text: &str, reason: &str, keep_intent: bool, patch: Ob
 /// The wait after a working agent's turn was cut off by a passing provider error is over: it is told to carry on, as
 /// the plugin's own turn. Called by the housekeeping pass. An agent that has exited meanwhile is started again first.
 pub fn resume_cut(id: &str) -> bool {
+    // Bounded recovery must be reconciled before a new model turn, even when the old pane exited.
+    if crate::budget_runtime::enabled() { return false; }
     fn due(t: &Task) -> Option<Value> { let w = waiting_of(t)?; (w.s("who") == "agent" && now() >= w.i("until") && !marker_alive(t.at("runner"))).then(|| w.clone()) }
     let Some(seen) = get(id) else { return false };
     if due(&seen).is_none() { return false; }

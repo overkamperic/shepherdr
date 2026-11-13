@@ -31,6 +31,7 @@ mod automations_open;
 mod automations_rest;
 mod automations_triggers;
 mod budget_runtime;
+mod budget_runtime_paths;
 mod board_actions;
 mod board_actions_rest;
 mod board_ask_bottom;

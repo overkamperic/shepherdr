@@ -2,9 +2,9 @@
 use sw::budget_runtime::mandatory_args;
 use crate::common;
 
-struct TrialEnv(Vec<(String, Option<std::ffi::OsString>)>);
+pub(super) struct TrialEnv(Vec<(String, Option<std::ffi::OsString>)>);
 impl TrialEnv {
-    fn install(file: &std::path::Path) -> Self {
+    pub(super) fn install(file: &std::path::Path) -> Self {
         let vars = sw::budget_binding::environment(file, |_| None).unwrap();
         let old = vars.iter().map(|(k, _)| (k.clone(), std::env::var_os(k))).collect();
         for (k, v) in vars { unsafe { std::env::set_var(k, v); } }
@@ -179,4 +179,68 @@ fn real_programs_budget_runtime_refuses_a_missing_request_gate() {
     let record = serde_json::json!({"control":control,"gate":w.base.join("missing-gate"),"trial":{"schema":1,"run_id":"run-1","token_ceiling":1500000,"model":"gpt-6.1-sol"}});
     std::fs::write(&binding, serde_json::to_vec(&record).unwrap()).unwrap();
     assert!(sw::trial_guard::authorize(&binding, &scope, "test/1", "qa", 1, "launch", "codex", "").is_err());
+}
+
+#[test]
+fn real_programs_budget_runtime_rejects_automatic_retry_on_trial() {
+    use std::os::unix::fs::PermissionsExt;
+    use sw::json::JsMut;
+    let w = common::world();
+    let id = w.add("Retry trial");
+    let control = w.base.join("controller");
+    std::fs::write(&control, "#!/bin/sh\nprintf 'LEASE lease-1\\n'\n").unwrap();
+    std::fs::set_permissions(&control, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let file = sw::budget_binding::path();
+    let saved = serde_json::json!({"approval":"/approval","database":"/db","control":control,"gate":control,"config":w.base.join("config"),"reports":w.base.join("reports"), "trial":{"schema":1,"run_id":"run-1","token_ceiling":1500000,"model":"gpt-6.1-sol"}});
+    std::fs::write(&file, serde_json::to_vec(&saved).unwrap()).unwrap();
+    let _binding_env = TrialEnv::install(&file);
+    sw::store::tasks::update(&id, |t| { t.put("agent", "codex"); t.put("trialModel", "gpt-6.1-sol"); Ok(sw::store::tasks::Change::Write) }).unwrap();
+    let err = sw::flow::send::send_own(&id, "Continue", "retry", false, sw::json::Obj::new(), 1).unwrap_err();
+    assert!(err.msg.contains("automatic model nudges are disabled"), "{}", err.msg);
+}
+
+#[test]
+fn real_programs_budget_runtime_trial_cannot_wake_an_existing_coordinator() {
+    use sw::json::Js;
+    let w = common::world_with(common::Opts { repo: true, settings: serde_json::json!({"coordinator.agent":"claude"}), ..Default::default() });
+    w.script(serde_json::json!({"coordinator":[{"status":"working"}]}));
+    sw::coordinator::requests::send(&w.root, "first", false, "", &w.socket).unwrap();
+    sw::coordinator::pump::pump(&w.socket);
+    let before = w.state().to_string();
+    assert!(before.contains("first"));
+    let file = sw::budget_binding::path();
+    let saved = serde_json::json!({"approval":"/approval","database":"/db","control":"/control","gate":"/gate","config":w.base.join("config"),"reports":w.base.join("reports"),"trial":{"schema":1,"run_id":"run-1","token_ceiling":1500000,"model":"gpt-6.1-sol"}});
+    std::fs::write(&file, serde_json::to_vec(&saved).unwrap()).unwrap();
+    let _binding_env = TrialEnv::install(&file);
+    sw::coordinator::requests::send(&w.root, "second trial prompt", false, "", &w.socket).unwrap();
+    sw::coordinator::pump::pump(&w.socket);
+    assert!(!w.state().to_string().contains("second trial prompt"));
+    assert!(sw::coordinator::state::get(&w.socket).unwrap().s("error").contains("trial"));
+}
+
+#[test]
+fn real_programs_budget_runtime_worker_and_reviewer_use_pinned_trial_leases() {
+    use std::os::unix::fs::PermissionsExt;
+    use sw::json::{Js, text};
+    let w = common::world_with(common::Opts { repo: true, settings: serde_json::json!({"worker.agent":"codex", "reviewer.agent":"codex", "review.when":"always"}), ..Default::default() });
+    w.script(serde_json::json!({"worker":[{"files":{"hello.txt":"hello"},"note":"Done."}],"reviewer":[{"verdict":{"meets":true,"text":"Pass.","findings":[]}}]}));
+    let id = w.add("Trial work");
+    let control = w.base.join("controller");
+    let log = w.base.join("leases");
+    std::fs::write(&control, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = repair ]; then echo REPAIR; else echo 'LEASE lease-1'; fi\n", log.display())).unwrap();
+    std::fs::set_permissions(&control, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let file = sw::budget_binding::path();
+    let saved = serde_json::json!({"approval":"/approval","database":"/db","control":control,"gate":control,"config":sw::store::files::config_dir(),"reports":w.base.join("reports"),"trial":{"schema":1,"run_id":"run-1","token_ceiling":1500000,"model":"gpt-6.1-sol"}});
+    std::fs::write(&file, serde_json::to_vec(&saved).unwrap()).unwrap();
+    let _binding_env = TrialEnv::install(&file);
+    common::delegate(&id);
+    let t = common::settle(&id);
+    if t.s("stage") == "nosummary" { sw::actions::finish_line::finish_anyway(&id).unwrap(); }
+    let t = common::settle(&id);
+    let calls = std::fs::read_to_string(log).unwrap();
+    assert!(calls.contains("--role implementation"), "{calls}");
+    assert!(calls.contains("--role qa"), "{calls}\n{}", serde_json::Value::Object(t.clone()));
+    let launch_calls = w.state().arr("calls").iter().map(text).filter(|c| c.starts_with("agent start") && c.contains("--kind codex")).collect::<Vec<_>>();
+    assert!(launch_calls.len() >= 2, "{launch_calls:?}");
+    assert!(launch_calls.iter().all(|c| c.contains("-m gpt-6.1-sol")), "{launch_calls:?}");
 }
