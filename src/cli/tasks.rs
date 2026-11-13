@@ -37,6 +37,7 @@ pub fn command(cmd: &str, a: &Args) -> Res<(Value, String)> {
     let here = context_folder();
     let said = |r: finish_line_said::Said| (shown_of(r.task.s("id")), r.msg);
     Ok(match cmd {
+        "budget-refresh" => { let id = need(1, "a task id")?; (crate::budget_refresh::refresh(&id)?, format!("{id}: context handoff prepared")) }
         "add" | "new" => {
             need(1, "a title")?;
             let (settings, research) = pick_choices(flags); // the task's own from the start, an agent on it or not

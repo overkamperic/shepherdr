@@ -20,6 +20,10 @@ use std::path::PathBuf;
 /// "sent": typed, with enter pressed (whether the agent then started on it is looked at again: submit.rs); "queued".
 /// `first`: the text is all a freshly started program is given.
 pub fn deliver(t: &Task, text: &str, wake: Option<Value>, first: bool) -> Res<&'static str> {
+    if !first { authorize_continuation(t, wake.as_ref())?; }
+    deliver_authorized(t, text, wake, first)
+}
+fn deliver_authorized(t: &Task, text: &str, wake: Option<Value>, first: bool) -> Res<&'static str> {
     match hand(&h(t), t.at("link").s("pane"), text) {
         Ok(mark) => { note_sent(t.s("id"), mark, text, first); Ok("sent") }
         Err(e) if e.code == "agent_blocked" || e.code == "agent_not_ready" => {
@@ -29,6 +33,17 @@ pub fn deliver(t: &Task, text: &str, wake: Option<Value>, first: bool) -> Res<&'
         }
         Err(e) => Err(e.into()),
     }
+}
+/// A queued or direct prompt cannot wake a trial agent without a fresh controller decision.
+pub fn authorize_continuation(t: &Task, wake: Option<&Value>) -> Res<()> {
+    if !crate::budget_runtime::trial_enabled()? { return Ok(()); }
+    crate::budget_runtime::validate_trial_environment()?;
+    if t.s("trialModel").is_empty() { crate::fail!("trial continuation has no pinned launch model"); }
+    let role = if wake.is_some_and(|w| w.b("reason")) { "repair" } else if crate::plan::open(t) { "planning" } else { "implementation" };
+    let scope = crate::store::files::dir_of(t.s("id")).join("trial-continuation-scope.json");
+    std::fs::write(&scope, serde_json::to_vec(&json!({"title": t.at("title"), "description": t.at("description")}))?)?;
+    crate::trial_guard::authorize(&crate::budget_binding::path(), &scope, t.s("id"), role, 0, "continue", t.s("agent"), t.s("trialModel"))?;
+    Ok(())
 }
 /// The closing-note rule. With a working hook the note is only the fallback, so it is repeated on plugin-sent prompts
 /// only for kinds without one; kinds with no launch flag for standing rules also get a short form of the rules.
@@ -67,6 +82,15 @@ pub fn send_own(id: &str, text: &str, reason: &str, keep_intent: bool, patch: Ob
     let mut wake = obj(json!({ "reason": reason, "keepIntent": keep_intent, "at": now() }));
     if tries > 0 { wake.put("tries", tries); }
     let wake = Value::Object(wake);
+    let trial = crate::budget_runtime::trial_enabled()?;
+    if trial {
+        let task = crate::store::tasks::get(id).ok_or("bounded task disappeared")?;
+        authorize_continuation(&task, Some(&wake))?;
+    }
+    if crate::budget_runtime::enabled() {
+        let task = crate::store::tasks::get(id).ok_or("bounded task disappeared")?;
+        crate::budget_runtime::repair(id, reason, task.i("armedAt"))?;
+    }
     let w2 = wake.clone();
     let t = update_wait(id, 10000, move |t| {
         for (k, v) in patch { t.insert(k, v); }
@@ -77,11 +101,14 @@ pub fn send_own(id: &str, text: &str, reason: &str, keep_intent: bool, patch: Ob
         Ok(Change::Write)
     })?;
     tell_sidebar(&t);
-    deliver(&t, &with_tail(&t, text), Some(wake), false)
+    if trial { deliver_authorized(&t, &with_tail(&t, text), Some(wake), false) }
+    else { deliver(&t, &with_tail(&t, text), Some(wake), false) }
 }
 /// The wait after a working agent's turn was cut off by a passing provider error is over: it is told to carry on, as
 /// the plugin's own turn. Called by the housekeeping pass. An agent that has exited meanwhile is started again first.
 pub fn resume_cut(id: &str) -> bool {
+    // Bounded recovery must be reconciled before a new model turn, even when the old pane exited.
+    if crate::budget_runtime::enabled() { return false; }
     fn due(t: &Task) -> Option<Value> { let w = waiting_of(t)?; (w.s("who") == "agent" && now() >= w.i("until") && !marker_alive(t.at("runner"))).then(|| w.clone()) }
     let Some(seen) = get(id) else { return false };
     if due(&seen).is_none() { return false; }

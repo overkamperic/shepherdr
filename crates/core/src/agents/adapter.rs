@@ -192,6 +192,7 @@ pub fn plan_mode_args(kind: &str) -> Option<Vec<String>> { (kind == "claude").th
 /// A headless command for the Watcher: the program, its arguments, and what goes in on its stdin.
 pub struct OneShot { pub command: String, pub args: Vec<String>, pub stdin: Option<String> }
 pub fn one_shot(kind: &str, model: &str, effort: &str, prompt: &str, system: &str, lean: bool) -> Option<OneShot> {
+    if crate::budget_runtime::enabled() { return None; } // Unleased background inference is unsupported.
     match kind {
         // The prompt goes in on stdin: --tools takes a list and would swallow a trailing prompt. `lean` starts it with
         // nothing of yours loaded and the helper's few words in place of Claude Code's own long instructions.

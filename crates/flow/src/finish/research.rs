@@ -23,7 +23,7 @@ pub fn research_only(id: &str, g: &mut Guard, tree: &str) -> Res<Option<bool>> {
     let list = if dir.is_empty() { vec![] } else { r::changes_of(&t, std::path::Path::new(&dir)).unwrap_or_default() };
     if list.is_empty() { return Ok(Some(true)); }
     let rounds = t.i("reviewRounds");
-    if rounds >= setting("review.rounds", Some(&t)).as_i64().unwrap_or(3) { fail(g, r::changed_failure(&t, &dir, &list, Some(rounds)), FailHow::default())?; return Ok(Some(false)); }
+    if crate::budget_runtime::enabled() || rounds >= setting("review.rounds", Some(&t)).as_i64().unwrap_or(3) { fail(g, r::changed_failure(&t, &dir, &list, Some(rounds)), FailHow::default())?; return Ok(Some(false)); }
     let mut failure = failure_patch(&r::changed_failure(&t, &dir, &list, None)).o("failure").cloned().unwrap_or_default();
     let words = format!("This task is research only, and you changed the repo ({}), so it is not done yet.\n\n{}\n\n{}\n\nThen finish again.", r::changed_words(&list), bound_detail(failure.s("detail")), failure.s("next"));
     failure.put("sentAt", now());

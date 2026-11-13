@@ -69,6 +69,7 @@ fn told_session(socket: &str, c: &Obj) -> Option<String> {
     Some(a.at("agent_session").t("value")).filter(|s| !s.is_empty())
 }
 fn ensure(api: &Herdr, socket: &str) -> Res<(Obj, bool)> {
+    if crate::budget_runtime::trial_enabled()? { crate::fail!("the Coordinator cannot run inside a guarded trial"); }
     let mut c = get(socket).unwrap_or_default();
     if c.b("run") { active(socket, &c); c = get(socket).unwrap_or_default(); }
     std::fs::create_dir_all(home(socket))?;

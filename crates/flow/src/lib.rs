@@ -8,6 +8,7 @@ pub mod actions;
 pub mod after;
 pub mod attempts;
 pub mod automations;
+pub mod budget_refresh;
 pub mod coordinator;
 pub mod delegate;
 pub mod extras;

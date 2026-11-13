@@ -8,7 +8,7 @@ use super::words::{agent_word, standing_of};
 use crate::agents::{helpers::still_at_work, installed, start};
 use crate::board_rule::reviewer_board_rule;
 use crate::clock::now;
-use crate::delegate::{launch_extras, rules::task_line_as};
+use crate::delegate::{launch_extras_model, rules::task_line_as};
 use crate::err::Res;
 use crate::flow;
 use crate::json::*;
@@ -89,7 +89,10 @@ fn compare(id: &str, g: &mut Guard, t: &Task) -> Res<Obj> {
     let ch = work(Some(t));
     let who = start::role_of("reviewer", &|n| ch.at(n).clone());
     let (mut k, mut model, mut effort) = (who.kind.clone(), who.model.clone(), who.effort.clone());
-    if !installed::installed(&k) && passed.first().map(|p| installed::installed(p.s("agent"))).unwrap_or(false) { k = passed[0].t("agent"); model = String::new(); effort = String::new(); }
+    if !installed::installed(&k) && passed.first().map(|p| installed::installed(p.s("agent"))).unwrap_or(false) {
+        if crate::budget_runtime::trial_enabled()? { crate::fail!("trial reviewer is unavailable; fallback refused"); }
+        k = passed[0].t("agent"); model = String::new(); effort = String::new();
+    }
     let writes = is_research(t) && t.at("comparing").s("pick") == "reviewer";
     let brief = format!("{}\n\n{}{}", task_line_as(t, "reviewer", 0), compare_brief(t, &passed, writes), if who.instructions.is_empty() { String::new() } else { format!("\n\n{}", start::own_words(&who.instructions)) });
     let cwd = passed.first().map(|c| c.t("worktree")).filter(|w| !w.is_empty() && Path::new(w).exists()).map(PathBuf::from).unwrap_or_else(|| folder_of(t.s("id")));
@@ -107,10 +110,11 @@ fn compare(id: &str, g: &mut Guard, t: &Task) -> Res<Obj> {
     let mut name: String = format!("sw-{repo}-{}-pick", t.t("n")).chars().take(32).collect();
     if taken.contains(&name) { name = format!("{}-{:04}", name.chars().take(27).collect::<String>(), now() % 10000); }
     let started_at = now();
-    let x = launch_extras(t, "reviewer", &k, 0, "", None)?;
+    let x = launch_extras_model(t, "reviewer", &k, &model, 0, "", None)?;
     g.set(|t| { t.obj_mut("link").put("reviewer", json!({ "pane": pane, "tab": tab, "agent": name, "kind": k })); t.put("reviewSession", x.session.clone().map(Value::String).unwrap_or(Value::Null)); })?;
-    let start_with = |hook: Vec<String>| -> Res<()> {
-        let args = start::start_args(&k, &start::StartOpts { model: model.clone(), effort: effort.clone(), fast: Some(who.fast), access: who.access.clone(), session: x.session.clone().unwrap_or_default(), extra: hook, ..Default::default() })?;
+    let start_with = |mut hook: Vec<String>| -> Res<()> {
+        hook.extend(x.mandatory.clone());
+        let args = start::start_args(&k, &start::StartOpts { model: x.model.clone(), effort: effort.clone(), fast: Some(who.fast), access: who.access.clone(), session: x.session.clone().unwrap_or_default(), extra: hook, ..Default::default() })?;
         match api.agent_start(&name, &k, &pane, &args, 60000) { Ok(_) => { crate::submit::settle(&api, &pane, &std::iter::once(crate::agents::kinds::program(&k).to_string()).chain(args).collect::<Vec<_>>().join(" ")); Ok(()) } Err(e) if e.code == "agent_not_ready" => Ok(()),
             Err(e) => Err(crate::agents::start_failed::say(&api, &crate::agents::start_failed::Start { kind: &k, setting: "reviewer.agent", again: "pick again" }, &pane, &e.message, &crate::store::files::dir_of(t.s("id")).join("runner.log")).into()) }
     };

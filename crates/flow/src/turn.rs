@@ -52,9 +52,27 @@ pub fn turn_ended(id: &str, role: &str, token: &str, round: i64, extra: &[String
         events.push(Value::Object(e));
         t.put("events", events);
         start = !marker_alive(t.at("runner"));
+        // In the plan writer's read-only mount a runner started here would stay in it, and could not make the worktree
+        // writable for the build: the housekeeping, which runs outside it, starts that runner instead (`owed_pass`).
+        if start && crate::plan::sandbox::inside() { t.put("finishOwed", now()); start = false; }
         Ok(Change::Write)
     });
     match r { Ok(_) => { if start { spawn_runner("finish", t.s("id"), &[]); } } Err(e) => log(&if e.kind == crate::err::Kind::Busy { format!("gave up on {id}: the task was busy") } else { e.msg }) }
+}
+/// The runners that turn-end reports from inside a read-only mount left owed, started here, outside it.
+pub fn owed_pass(tasks: &[Task], socket: &str) {
+    for t in tasks.iter().filter(|t| t.b("finishOwed") && t.at("link").s("socket") == socket) {
+        let mut go = false;
+        let _ = update_wait(t.s("id"), 2000, |t| {
+            if !t.b("finishOwed") || marker_alive(t.at("runner")) { return Ok(Change::Keep); }
+            go = !pending_events(t).is_empty();
+            // Keep the debt until its events are consumed: a spawn can fail, or die before claiming the task.
+            if go { return Ok(Change::Keep); }
+            t.del("finishOwed");
+            Ok(Change::Write)
+        });
+        if go { spawn_runner("finish", t.s("id"), &[]); }
+    }
 }
 /// Why did this pane stop: { when, why, turn, hooked, kind, version, can_read }. The one seam for "when and why", fed
 /// by the hook's event and the saved conversation.

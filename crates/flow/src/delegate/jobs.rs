@@ -93,7 +93,16 @@ fn delegate_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
                 git_out(&root, &["update-ref", "HEAD", &c])?;
             }
             let branch = free_branch(&root, &t);
-            let from = base_ref(&root, &setting_text("workspace.from", Some(&t)));
+            let mode = setting_text("workspace.from", Some(&t));
+            let from = if mode == "here" && !t.s("requestedBaseSha").is_empty() {
+                let pinned = t.s("requestedBaseSha");
+                if pinned.len() != 40 || !pinned.bytes().all(|c| c.is_ascii_hexdigit()) {
+                    crate::fail!("invalid requested workspace base");
+                }
+                let resolved = git_out(&root, &["rev-parse", "--verify", &format!("{pinned}^{{commit}}")])?;
+                if resolved != pinned { crate::fail!("requested workspace base changed"); }
+                resolved
+            } else { base_ref(&root, &mode) };
             // An attempt works in a tab of its task's one space; any other task in a space of its own.
             res = if t.b("attemptOf") { crate::attempts::place::open_place(&api, &root, &t, &branch, &from)? } else { flow::spaces::opening_worktree(&api, &root, || api.worktree_create(&root.display().to_string(), &branch, &from, &label))? };
             let dir = if res.at("worktree").b("path") { res.at("worktree").t("path") } else { res.at("workspace").at("worktree").t("checkout_path") };

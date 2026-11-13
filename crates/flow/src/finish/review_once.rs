@@ -6,7 +6,7 @@ use super::review_fallback::{reviewer_now, Cut};
 use super::shared::ms;
 use crate::agents::{adapter, helpers::still_at_work, installed, start, start_failed};
 use crate::clock::now;
-use crate::delegate::{launch_extras, rules::task_line_as};
+use crate::delegate::{launch_extras_model, rules::task_line_as};
 use crate::err::Res;
 use crate::flow;
 use crate::gate;
@@ -46,9 +46,13 @@ pub fn review_once(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, 
     // kind's own default model and effort. Or, with a `reviewer.fallback`, the first on that list that is installed.
     let who = start::role_of("reviewer", &|n| ch.at(n).clone());
     let (now_agent, stand_in) = reviewer_now(&t, ch);
+    if crate::budget_runtime::trial_enabled()? && (!stand_in.is_empty() || t.b("reviewerOn")) { crate::fail!("trial runs do not permit reviewer fallback"); }
     let on = agent_of(&now_agent);
     let (mut rkind, mut rmodel, mut reffort, mut by) = (on.kind.clone(), on.model.clone(), who.effort.clone(), now_agent.clone());
-    if !installed::installed(&rkind) && installed::installed(t.s("agent")) { rkind = t.t("agent"); rmodel = String::new(); reffort = String::new(); by = rkind.clone(); }
+    if !installed::installed(&rkind) && installed::installed(t.s("agent")) {
+        if crate::budget_runtime::trial_enabled()? { crate::fail!("trial reviewer is unavailable; fallback refused"); }
+        rkind = t.t("agent"); rmodel = String::new(); reffort = String::new(); by = rkind.clone();
+    }
     // A stand-in for a program that is not installed is a hand-over like any other.
     if !stand_in.is_empty() { g.set(|t| { let h = log_handover(t, "reviewer", ch.s("reviewer.agent"), &now_agent, &format!("{stand_in} is not installed here")); t.put("reviewerOn", now_agent.clone()); t.put("msg", handover_line(&h)); })?; }
     let round = if plan.is_some() { 0 } else { t.i("reviewRound") + 1 };
@@ -78,11 +82,12 @@ pub fn review_once(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, 
         let mut name: String = format!("{base}-r").chars().take(32).collect();
         if taken.contains(&name) { name = format!("{}-{:04}", name.chars().take(27).collect::<String>(), now() % 10000); }
         let started_at = now(); // a turn-end report older than this is from a try of this review that was cut off
-        let x = launch_extras(&t, "reviewer", &rkind, round, "", None)?;
+        let x = launch_extras_model(&t, "reviewer", &rkind, &rmodel, round, "", None)?;
         t = g.set(|t| { t.obj_mut("link").put("reviewer", json!({ "pane": pane, "tab": made.tab, "agent": name, "kind": rkind })); t.put("reviewSession", x.session.clone().map(Value::String).unwrap_or(Value::Null)); })?;
         flow::sidebar::tell_sidebar(&t); // the reviewer's pane has its entry in herdr's sidebar from the start
-        let opts = |hook: Vec<String>| start::StartOpts { model: rmodel.clone(), effort: reffort.clone(), fast: Some(who.fast), access: who.access.clone(), session: x.session.clone().unwrap_or_default(), extra: hook, ..Default::default() };
-        let start_with = |hook: Vec<String>| -> Res<()> {
+        let opts = |hook: Vec<String>| start::StartOpts { model: x.model.clone(), effort: reffort.clone(), fast: Some(who.fast), access: who.access.clone(), session: x.session.clone().unwrap_or_default(), extra: hook, ..Default::default() };
+        let start_with = |mut hook: Vec<String>| -> Res<()> {
+            hook.extend(x.mandatory.clone());
             let args = start::start_args(&rkind, &opts(hook))?;
             let r = if plan.is_some() { crate::plan::sandbox::start_program(&api, &get(id).unwrap_or(t.clone()), &name, &rkind, &pane, &args) } else { api.agent_start(&name, &rkind, &pane, &args, 60000).map(|_| ()) };
             match r { Ok(()) => { crate::submit::settle(&api, &pane, &std::iter::once(crate::agents::kinds::program(&rkind).to_string()).chain(args).collect::<Vec<_>>().join(" ")); Ok(()) } Err(e) if e.code == "agent_not_ready" => Ok(()),

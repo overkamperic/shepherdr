@@ -83,7 +83,7 @@ pub fn after_review(c: Ctx, g: &mut Guard) -> Res<()> {
     t = g.set(|t| { t.put("failure", Value::Null); if t.at("mergeIntent").b("auto") && !by_itself(t) { t.put("mergeIntent", Value::Null); } })?;
     // The loop: a review that fails the gate goes straight back, at most `review.rounds` times (0: never).
     let rounds = t.i("reviewRounds");
-    let max = ch.i("review.rounds");
+    let max = if crate::budget_runtime::enabled() { 1 } else { ch.i("review.rounds") };
     let passed = review.as_ref().map(gate::passes).unwrap_or(true);
     let fresh = review.as_ref().map(|r| !r.b("keptAt")).unwrap_or(false);
     // The task's tokens, the reviewer's now among them. At the limit the task stops here, under "needs you".

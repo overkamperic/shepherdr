@@ -26,6 +26,7 @@ const FRESH: &[&str] = &[
     "branch",
     "from",
     "baseSha",
+    "requestedBaseSha",
     "pr",
     "prMerged",
     "prState",
@@ -77,6 +78,15 @@ pub fn delegate_with(id: &str, asked: Vec<(String, Value)>, w: Wait) -> Res<Task
     let deps = match &w.after { Some(r) => Some(after::checked(Some(cur.s("id")), r)?), None => None };
     let asked: Vec<(String, Value)> = asked.into_iter().filter(|(_, v)| !(v.is_null() || *v == json!(""))).collect();
     let values = checked(&asked, &Scope::task(&cur))?;
+    // Pin "here" when requested, before a queued runner can observe a different checkout/head.
+    // The caller is usable only when it belongs to this task's primary repository.
+    let root = crate::store::repos::folder_of(cur.s("id"));
+    let caller = std::env::current_dir().ok().filter(|p| {
+        std::fs::canonicalize(crate::store::repos::primary_root(p)).ok()
+            == std::fs::canonicalize(&root).ok()
+    });
+    let here = caller.as_deref().unwrap_or(&root);
+    let requested_base = crate::store::repos::git_out(here, &["rev-parse", "HEAD"]).ok();
     let socket = current_socket();
     let mut stale: Vec<Task> = vec![];
     let mut old: Option<(String, String)> = None; // the last round's space, when its clean-up had not closed it yet
@@ -106,6 +116,11 @@ pub fn delegate_with(id: &str, asked: Vec<(String, Value)>, w: Wait) -> Res<Task
         // Research only or not is decided when the agent starts, not here: until then the task follows the setting.
         let why = turn_refusal(t, setting(RESEARCH, Some(t)) == json!(true));
         if !why.is_empty() { crate::fail!("{why} To start it as it was: herdr-projects set {RESEARCH} false --task {id}"); }
+        if !t.b("worktree") {
+            if setting_text("workspace.from", Some(t)) == "here" {
+                if let Some(base) = &requested_base { t.put("requestedBaseSha", base.clone()); }
+            } else { t.del("requestedBaseSha"); }
+        }
         t.put("researchOpen", true);
         let agent = agent_of(&setting_text("worker.agent", Some(t))).kind;
         t.put("agent", agent.clone()); t.put("app", agent);

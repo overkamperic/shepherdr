@@ -254,6 +254,12 @@ fn deliver_inbox(t: &Task, api: &Herdr) {
     let items = take_text(id).unwrap_or_default();
     if items.is_empty() { return; }
     let wake = items.iter().filter_map(|m| m.at("wake").as_object().filter(|_| m.b("wake")).cloned()).last();
+    let wake_value = wake.clone().map(Value::Object);
+    if let Err(e) = crate::flow::send::authorize_continuation(t, wake_value.as_ref()) {
+        let _ = untake_text(id, items.len());
+        log(&e.msg);
+        return;
+    }
     // The send time arms the pipeline for the turn this starts, so it is written before the text goes out.
     let before: Vec<(&str, Value)> = ["armedAt", "expectedWake", "stage", "msg"].iter().map(|k| (*k, t.at(k).clone())).collect();
     let _ = update_wait(id, 10000, |t| {
