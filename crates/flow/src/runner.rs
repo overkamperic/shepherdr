@@ -20,6 +20,37 @@ pub fn detach(c: &mut Command) {
     use std::os::unix::process::CommandExt;
     unsafe { c.pre_exec(|| { libc::setsid(); Ok(()) }); }
 }
+/// Start a job and leave it to run, so that it is not this process's child: the child started here forks once more and
+/// exits at once (it is collected here), and the job runs in the grandchild, which the system (init, or the nearest
+/// subreaper) takes over and collects when it ends. A setsid() child alone stays a child: keeper-work, which lives for
+/// days and never waits, once held 57,267 dead ones. The job leads a session of its own, as with `detach`. Returns the
+/// job's own pid (what a runner writes in its marker), 0 when it did not start.
+pub fn spawn_detached(c: &mut Command) -> u32 {
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+    // Closed on exec on every platform (std's pipe): the job never holds it.
+    let Ok((mut r, wr)) = std::io::pipe() else { return 0 };
+    let w = wr.as_raw_fd();
+    // Only what is safe between fork and exec: fork, write, _exit, setsid.
+    unsafe {
+        c.pre_exec(move || {
+            libc::setsid();
+            match libc::fork() {
+                -1 => Err(std::io::Error::last_os_error()),
+                0 => { libc::setsid(); Ok(()) }
+                pid => { let b = pid.to_ne_bytes(); libc::write(w, b.as_ptr() as *const libc::c_void, b.len()); libc::_exit(0) }
+            }
+        });
+    }
+    let child = c.spawn();
+    drop(wr);
+    let Ok(mut ch) = child else { return 0 };
+    let _ = ch.wait();
+    let mut b = [0u8; 4];
+    if r.read_exact(&mut b).is_err() { return 0; }
+    i32::from_ne_bytes(b).max(0) as u32
+}
 /// Start a detached runner for one job on one task. Returns at once.
 pub fn spawn_runner(job: &str, id: &str, extra: &[&str]) -> u32 {
     if inline() { JOBS.with(|j| j.borrow_mut().push((job.into(), id.into(), extra.iter().map(|s| s.to_string()).collect()))); return 0; }
@@ -31,8 +62,7 @@ pub fn spawn_runner(job: &str, id: &str, extra: &[&str]) -> u32 {
     c.arg("run").arg(job).arg(id).args(extra).current_dir(data_dir()).stdin(Stdio::null());
     for k in DROP_ENV { c.env_remove(k); }
     match log { Ok(f) => { let f2 = f.try_clone().ok(); c.stdout(f); if let Some(f2) = f2 { c.stderr(f2); } } Err(_) => { c.stdout(Stdio::null()).stderr(Stdio::null()); } }
-    detach(&mut c);
-    c.spawn().map(|ch| ch.id()).unwrap_or(0)
+    spawn_detached(&mut c)
 }
 /// Tests drain the jobs that would have been detached.
 pub fn drain_jobs(run: &dyn Fn(&str, &str, &[String])) {
@@ -49,8 +79,7 @@ pub fn detached_sh(cmd: &str, env: &[(&str, String)]) {
     let mut c = Command::new("sh");
     c.args(["-c", cmd]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     for (k, v) in env { c.env(k, v); }
-    detach(&mut c);
-    let _ = c.spawn();
+    spawn_detached(&mut c);
 }
 pub fn runner_alive(t: &Task) -> bool { marker_alive(t.at("runner")) }
 fn mine(m: &Value) -> bool { m.i("pid") == std::process::id() as i64 }
