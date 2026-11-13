@@ -26,10 +26,12 @@ pub fn detach(c: &mut Command) {
 /// days and never waits, once held 57,267 dead ones. The job leads a session of its own, as with `detach`. Returns the
 /// job's own pid (what a runner writes in its marker), 0 when it did not start.
 pub fn spawn_detached(c: &mut Command) -> u32 {
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
     use std::os::unix::process::CommandExt;
-    let mut fds = [0i32; 2];
-    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 { return 0; }
-    let (r, w) = (fds[0], fds[1]);
+    // Closed on exec on every platform (std's pipe): the job never holds it.
+    let Ok((mut r, wr)) = std::io::pipe() else { return 0 };
+    let w = wr.as_raw_fd();
     // Only what is safe between fork and exec: fork, write, _exit, setsid.
     unsafe {
         c.pre_exec(move || {
@@ -42,15 +44,12 @@ pub fn spawn_detached(c: &mut Command) -> u32 {
         });
     }
     let child = c.spawn();
-    unsafe { libc::close(w); }
-    let mut pid = 0u32;
-    if let Ok(mut ch) = child {
-        let _ = ch.wait();
-        let mut b = [0u8; 4];
-        if unsafe { libc::read(r, b.as_mut_ptr() as *mut libc::c_void, 4) } == 4 { pid = i32::from_ne_bytes(b).max(0) as u32; }
-    }
-    unsafe { libc::close(r); }
-    pid
+    drop(wr);
+    let Ok(mut ch) = child else { return 0 };
+    let _ = ch.wait();
+    let mut b = [0u8; 4];
+    if r.read_exact(&mut b).is_err() { return 0; }
+    i32::from_ne_bytes(b).max(0) as u32
 }
 /// Start a detached runner for one job on one task. Returns at once.
 pub fn spawn_runner(job: &str, id: &str, extra: &[&str]) -> u32 {
