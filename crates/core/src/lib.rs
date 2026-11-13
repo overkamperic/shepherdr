@@ -4,6 +4,7 @@
 pub mod agents;
 pub mod board_rule;
 pub mod budget_runtime;
+pub mod trial_guard;
 pub mod budget_binding;
 pub mod check_progress;
 pub mod clock;

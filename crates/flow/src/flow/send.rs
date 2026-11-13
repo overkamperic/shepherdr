@@ -20,6 +20,7 @@ use std::path::PathBuf;
 /// "sent": typed, with enter pressed (whether the agent then started on it is looked at again: submit.rs); "queued".
 /// `first`: the text is all a freshly started program is given.
 pub fn deliver(t: &Task, text: &str, wake: Option<Value>, first: bool) -> Res<&'static str> {
+    if !first { authorize_continuation(t, wake.as_ref())?; }
     match hand(&h(t), t.at("link").s("pane"), text) {
         Ok(mark) => { note_sent(t.s("id"), mark, text, first); Ok("sent") }
         Err(e) if e.code == "agent_blocked" || e.code == "agent_not_ready" => {
@@ -29,6 +30,17 @@ pub fn deliver(t: &Task, text: &str, wake: Option<Value>, first: bool) -> Res<&'
         }
         Err(e) => Err(e.into()),
     }
+}
+/// A queued or direct prompt cannot wake a trial agent without a fresh controller decision.
+pub fn authorize_continuation(t: &Task, wake: Option<&Value>) -> Res<()> {
+    if !crate::budget_runtime::trial_enabled()? { return Ok(()); }
+    crate::budget_runtime::validate_trial_environment()?;
+    if t.s("trialModel").is_empty() { crate::fail!("trial continuation has no pinned launch model"); }
+    let role = if wake.is_some_and(|w| w.b("reason")) { "repair" } else if crate::plan::open(t) { "planning" } else { "implementation" };
+    let scope = crate::store::files::dir_of(t.s("id")).join("trial-continuation-scope.json");
+    std::fs::write(&scope, serde_json::to_vec(&json!({"title": t.at("title"), "description": t.at("description")}))?)?;
+    crate::trial_guard::authorize(&crate::budget_binding::path(), &scope, t.s("id"), role, 0, "continue", t.s("agent"), t.s("trialModel"))?;
+    Ok(())
 }
 /// The closing-note rule. With a working hook the note is only the fallback, so it is repeated on plugin-sent prompts
 /// only for kinds without one; kinds with no launch flag for standing rules also get a short form of the rules.
@@ -64,7 +76,7 @@ pub fn note_rule(t: &Task) -> String { format!("Before you stop, write your clos
 /// A prompt the plugin itself sends (check output, review findings, conflict or pull-request repair). It writes
 /// expectedWake first, so the turn it causes is known to be the plugin's own: counters and an approved merge survive.
 pub fn send_own(id: &str, text: &str, reason: &str, keep_intent: bool, patch: Obj, tries: i64) -> Res<&'static str> {
-    if crate::budget_runtime::enabled() {
+    if crate::budget_runtime::enabled() && !crate::budget_runtime::trial_enabled()? {
         let task = crate::store::tasks::get(id).ok_or("bounded task disappeared")?;
         crate::budget_runtime::repair(id, reason, task.i("armedAt"))?;
     }

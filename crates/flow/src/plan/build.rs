@@ -34,6 +34,7 @@ pub fn begin(g: &mut Guard, t: Task, api: &Herdr) -> Res<Task> {
     let who = agent_of(&setting_text("plan.agent", Some(&t)));
     // A planner that is not installed here: the working agent plans, and the task says so.
     let own = !who.kind.is_empty() && installed(&who.kind);
+    if !who.kind.is_empty() && !own && crate::budget_runtime::trial_enabled()? { crate::fail!("trial planner is unavailable; fallback refused"); }
     let missing = (!who.kind.is_empty() && !own).then(|| format!("planned by the working agent: {} is not installed here", who.kind));
     let made = if own {
         let m = flow::tabs::open_tab(api, &t, flow::tabs::PLANNER_TAB, &dir.display().to_string(), &board_env(), "the planner")?;

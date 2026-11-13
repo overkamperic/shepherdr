@@ -3,7 +3,24 @@ use crate::err::Res;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-pub fn enabled() -> bool { std::env::var_os("PIPELINE_BUDGET_MANIFEST").is_some() || crate::budget_binding::path().exists() }
+pub fn enabled() -> bool { std::env::var_os("PIPELINE_BUDGET_MANIFEST").is_some() || std::env::var_os("PIPELINE_TRIAL_REQUIRED").is_some() || crate::budget_binding::path().exists() || crate::budget_binding::path().with_file_name("pipeline-trial.json").exists() }
+pub fn trial_enabled() -> Res<bool> {
+    let file = crate::budget_binding::path();
+    if !file.exists() {
+        if std::env::var_os("PIPELINE_TRIAL_REQUIRED").is_some() || file.with_file_name("pipeline-trial.json").exists() { crate::fail!("trial binding missing"); }
+        return Ok(false);
+    }
+    let saved: crate::json::Value = serde_json::from_slice(&std::fs::read(&file)?)?;
+    let bound = crate::budget_binding::durable_trial(&file, &saved)?.is_some();
+    if !bound && std::env::var_os("PIPELINE_TRIAL_REQUIRED").is_some() { crate::fail!("trial binding missing"); }
+    Ok(bound)
+}
+/// Trial children must inherit the same mandatory controller and gate as the binding.
+pub fn validate_trial_environment() -> Res<()> {
+    let missing = crate::budget_binding::environment(&crate::budget_binding::path(), |key| std::env::var(key).ok())?;
+    if !missing.is_empty() { crate::fail!("trial request-gate environment is incomplete"); }
+    Ok(())
+}
 pub fn mandatory_args(kind: &str, lease: &str) -> Res<Vec<String>> {
     if kind != "codex" || lease.is_empty() || lease.len() > 128 || !lease.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
         crate::fail!("bounded runs require a supported Codex runtime and controller lease");
@@ -16,14 +33,17 @@ pub fn mandatory_args(kind: &str, lease: &str) -> Res<Vec<String>> {
     args.extend(["-c".into(), "sandbox_workspace_write.network_access=false".into()]);
     Ok(args)
 }
-pub fn launch(task: &str, role: &str, kind: &str, round: i64, scope: &crate::json::Value) -> Res<Vec<String>> {
-    if !enabled() { return Ok(vec![]); }
+pub fn launch(task: &str, role: &str, kind: &str, model: &str, round: i64, scope: &crate::json::Value) -> Res<(Vec<String>, String)> {
+    if !enabled() { return Ok((vec![], model.into())); }
     if kind != "codex" { crate::fail!("bounded runtime does not support {kind}; no provider fallback is permitted"); }
     let control = std::env::var("PIPELINE_BUDGET_CONTROL").map_err(|_| crate::err::Error::new("bounded controller command missing"))?;
     if !Path::new(&control).is_absolute() { crate::fail!("bounded controller command must be absolute"); }
     let scope_file = crate::store::files::dir_of(task).join(format!("budget-scope-{role}-{round}.json"));
     std::fs::write(&scope_file, serde_json::to_vec(scope)?)?;
-    let lease = control_call(&control, &["lease", "--task", task, "--role", role, "--slot", &round.to_string(), "--scope-file", &scope_file.display().to_string()])?;
+    let (model, lease) = if trial_enabled()? {
+        validate_trial_environment()?;
+        crate::trial_guard::authorize(&crate::budget_binding::path(), &scope_file, task, role, round, "launch", kind, model)?
+    } else { (model.into(), control_call(&control, &["lease", "--task", task, "--role", role, "--slot", &round.to_string(), "--scope-file", &scope_file.display().to_string()])?) };
     let mut args = mandatory_args(kind, &lease)?;
     let output = crate::store::files::dir_of(task).join(if role == "qa" { "review" } else { "bounded-output" });
     std::fs::create_dir_all(&output)?;
@@ -31,11 +51,11 @@ pub fn launch(task: &str, role: &str, kind: &str, round: i64, scope: &crate::jso
     let reports = crate::store::files::reports_dir().join(task);
     std::fs::create_dir_all(&reports)?;
     args.extend(["--add-dir".into(), reports.display().to_string()]);
-    Ok(args)
+    Ok((args, model))
 }
 pub fn environment() -> Vec<(String, String)> {
     if !enabled() { return vec![]; }
-    ["PIPELINE_BUDGET_MANIFEST", "PIPELINE_BUDGET_DB", "PIPELINE_BUDGET_CONTROL", "CODEX_REQUEST_GATE", "HERDR_PROJECTS_REPORTS_DIR"]
+    ["PIPELINE_BUDGET_MANIFEST", "PIPELINE_BUDGET_DB", "PIPELINE_BUDGET_CONTROL", "PIPELINE_TRIAL_REQUIRED", "CODEX_REQUEST_GATE", "HERDR_PROJECTS_REPORTS_DIR"]
         .into_iter().filter_map(|key| std::env::var(key).ok().map(|value| (key.into(), value)))
         .chain(std::iter::once(("CODEX_REQUEST_GATE_REQUIRED".into(), "1".into()))).collect()
 }
