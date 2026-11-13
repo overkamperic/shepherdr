@@ -81,3 +81,39 @@ fn real_programs_trial_repair_needs_both_allowance_and_continuation_lease() {
     assert!(!sw::flow::send::resume_cut(&id));
     assert_eq!(sw::store::tasks::get(&id).unwrap().at("waiting").s("who"), "agent");
 }
+
+#[test]
+fn real_programs_trial_denied_continuation_keeps_repair_allowance_and_review_round() {
+    let w = common::world();
+    let id = w.add("Denied review repair");
+    let (_env, controller, log) = bind(&w);
+    sw::store::tasks::update(&id, |t| { t.put("agent", "codex"); t.put("trialModel", "gpt-6.1-sol"); t.put("armedAt", 123); t.put("stage", "reviewing"); t.put("reviewRounds", 0); Ok(sw::store::tasks::Change::Write) }).unwrap();
+    std::fs::write(&controller, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = repair ]; then echo REPAIR; exit 0; fi\necho DENY; exit 1\n", log.display())).unwrap();
+    let patch = sw::json::obj(json!({"reviewRounds":1}));
+    assert!(sw::flow::send::send_own(&id, "Fix findings", "review", false, patch, 0).is_err());
+    let calls = std::fs::read_to_string(log).unwrap();
+    assert!(calls.contains("--action continue"), "{calls}");
+    assert!(!calls.lines().any(|line| line.starts_with("repair ")), "{calls}");
+    let t = sw::store::tasks::get(&id).unwrap();
+    assert_eq!(t.i("reviewRounds"), 0);
+    assert_eq!(t.i("armedAt"), 123);
+    assert_eq!(t.s("stage"), "reviewing");
+}
+
+#[test]
+fn real_programs_legacy_bounded_worker_plan_keeps_implementation_role() {
+    let w = common::world();
+    let id = w.add("Legacy plan");
+    let controller = w.base.join("legacy-controller");
+    let log = w.base.join("legacy-leases");
+    std::fs::write(&controller, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\necho lease-1\n", log.display())).unwrap();
+    std::fs::set_permissions(&controller, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let binding = sw::budget_binding::path();
+    std::fs::write(&binding, serde_json::to_vec(&json!({"approval":"/approval","database":"/db","control":controller,"gate":controller,"config":sw::store::files::config_dir(),"reports":w.base.join("reports")})).unwrap()).unwrap();
+    let _env = TrialEnv::install(&binding);
+    let mut task = sw::store::tasks::get(&id).unwrap();
+    task.put("plan", json!({"asked":1}));
+    sw::delegate::launch_extras(&task, "agent", "codex", 0, "", None).unwrap();
+    let call = std::fs::read_to_string(log).unwrap();
+    assert!(call.contains("--role implementation"), "{call}");
+}

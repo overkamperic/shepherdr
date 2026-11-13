@@ -33,10 +33,12 @@ pub fn launch_extras(t: &Task, role: &str, kind: &str, round: i64, standing: &st
     launch_extras_model(t, role, kind, "", round, standing, resume)
 }
 pub fn launch_extras_model(t: &Task, role: &str, kind: &str, model: &str, round: i64, standing: &str, resume: Option<&str>) -> Res<Extras> {
-    if crate::budget_runtime::trial_enabled()? && ((role == "agent" && t.b("on")) || (role == "reviewer" && t.b("reviewerOn"))) {
+    let trial = crate::budget_runtime::trial_enabled()?;
+    if trial && ((role == "agent" && t.b("on")) || (role == "reviewer" && t.b("reviewerOn"))) {
         crate::fail!("trial runs do not permit role fallback");
     }
-    let budget_role = if role == "reviewer" { "qa" } else if plan::open(t) { "planning" } else { "implementation" };
+    let planning = if trial { plan::open(t) } else { plan::planner(t) };
+    let budget_role = if role == "reviewer" { "qa" } else if planning { "planning" } else { "implementation" };
     let (mandatory, model) = crate::budget_runtime::launch(t.s("id"), budget_role, kind, model, round, &json!({"title": t.at("title"), "description": t.at("description")}))?;
     let token = crate::util::random_hex(18);
     set_token(t.s("id"), role, &token, round)?;

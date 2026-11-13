@@ -21,6 +21,9 @@ use std::path::PathBuf;
 /// `first`: the text is all a freshly started program is given.
 pub fn deliver(t: &Task, text: &str, wake: Option<Value>, first: bool) -> Res<&'static str> {
     if !first { authorize_continuation(t, wake.as_ref())?; }
+    deliver_authorized(t, text, wake, first)
+}
+fn deliver_authorized(t: &Task, text: &str, wake: Option<Value>, first: bool) -> Res<&'static str> {
     match hand(&h(t), t.at("link").s("pane"), text) {
         Ok(mark) => { note_sent(t.s("id"), mark, text, first); Ok("sent") }
         Err(e) if e.code == "agent_blocked" || e.code == "agent_not_ready" => {
@@ -76,13 +79,18 @@ pub fn note_rule(t: &Task) -> String { format!("Before you stop, write your clos
 /// A prompt the plugin itself sends (check output, review findings, conflict or pull-request repair). It writes
 /// expectedWake first, so the turn it causes is known to be the plugin's own: counters and an approved merge survive.
 pub fn send_own(id: &str, text: &str, reason: &str, keep_intent: bool, patch: Obj, tries: i64) -> Res<&'static str> {
+    let mut wake = obj(json!({ "reason": reason, "keepIntent": keep_intent, "at": now() }));
+    if tries > 0 { wake.put("tries", tries); }
+    let wake = Value::Object(wake);
+    let trial = crate::budget_runtime::trial_enabled()?;
+    if trial {
+        let task = crate::store::tasks::get(id).ok_or("bounded task disappeared")?;
+        authorize_continuation(&task, Some(&wake))?;
+    }
     if crate::budget_runtime::enabled() {
         let task = crate::store::tasks::get(id).ok_or("bounded task disappeared")?;
         crate::budget_runtime::repair(id, reason, task.i("armedAt"))?;
     }
-    let mut wake = obj(json!({ "reason": reason, "keepIntent": keep_intent, "at": now() }));
-    if tries > 0 { wake.put("tries", tries); }
-    let wake = Value::Object(wake);
     let w2 = wake.clone();
     let t = update_wait(id, 10000, move |t| {
         for (k, v) in patch { t.insert(k, v); }
@@ -93,7 +101,8 @@ pub fn send_own(id: &str, text: &str, reason: &str, keep_intent: bool, patch: Ob
         Ok(Change::Write)
     })?;
     tell_sidebar(&t);
-    deliver(&t, &with_tail(&t, text), Some(wake), false)
+    if trial { deliver_authorized(&t, &with_tail(&t, text), Some(wake), false) }
+    else { deliver(&t, &with_tail(&t, text), Some(wake), false) }
 }
 /// The wait after a working agent's turn was cut off by a passing provider error is over: it is told to carry on, as
 /// the plugin's own turn. Called by the housekeeping pass. An agent that has exited meanwhile is started again first.
